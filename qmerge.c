@@ -1154,25 +1154,49 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 		/* Walk the rdepends here. Merging what need be. */
 		for (i = 1; i < ARGC; i++) {
 			depend_atom *subatom;
+			tree_pkg_ctx *installed_pkg;
+			tree_pkg_ctx *binpkg_pkg;
 			char        *name = ARGV[i];
+
+			if (strchr(name, '[') != NULL) {
+				continue;
+			}
+
 			switch (*name) {
 				case '|':
 				case '!':
 				case '<':
 				case '>':
 				case '=':
-					/* version-constrained dependency - process normally */
+					/* version-constrained dependency */
 					if ((subatom = atom_explode(name)) != NULL) {
-						bpkg = best_version(subatom, BV_INSTALLED | BV_BINPKG);
-						if (bpkg == NULL) {
-							warn("cannot resolve %s from rdepend(%s)",
-									name, p);
+						/* let's check if already installed */
+						installed_pkg = best_version(subatom, BV_INSTALLED);
+						binpkg_pkg = best_version(subatom, BV_BINPKG);
+
+						if (installed_pkg != NULL && binpkg_pkg == NULL) {
 							atom_implode(subatom);
 							continue;
 						}
 
-						if (tree_pkg_get_treetype(bpkg) == TREETYPE_BINPKG)
-							pkg_fetch(level + 1, subatom, bpkg);
+						if (installed_pkg != NULL && binpkg_pkg != NULL) {
+							/* both exist, so only fetch if binpkg is newer */
+							atom_ctx *iatom = tree_pkg_atom(installed_pkg, false);
+							atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
+							int cmp = atom_compare(batom, iatom);
+
+							if (cmp == EQUAL || cmp == OLDER) {
+								/* if it's the same or older: skip */
+								atom_implode(subatom);
+								continue;
+							}
+						}
+
+						if (binpkg_pkg != NULL) {
+							pkg_fetch(level + 1, subatom, binpkg_pkg);
+						} else if (installed_pkg == NULL) {
+							warn("cannot resolve %s from rdepend(%s)", name, p);
+						}
 
 						atom_implode(subatom);
 					} else {
@@ -1182,17 +1206,36 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 				case '\0':
 					break;
 				default:
+					/* Unversioned dependency */
 					if ((subatom = atom_explode(name)) != NULL) {
-						bpkg = best_version(subatom, BV_INSTALLED | BV_BINPKG);
-						if (bpkg == NULL) {
-							warn("cannot resolve %s from rdepend(%s)",
-									name, p);
+						/* let's check if already installed */
+						installed_pkg = best_version(subatom, BV_INSTALLED);
+						binpkg_pkg = best_version(subatom, BV_BINPKG);
+
+						if (installed_pkg != NULL && binpkg_pkg == NULL) {
+							/* already installed and has no binpkg */
 							atom_implode(subatom);
 							continue;
 						}
 
-						if (tree_pkg_get_treetype(bpkg) == TREETYPE_BINPKG)
-							pkg_fetch(level + 1, subatom, bpkg);
+						if (installed_pkg != NULL && binpkg_pkg != NULL) {
+							/* both exist, so only fetch if binpkg is newer */
+							atom_ctx *iatom = tree_pkg_atom(installed_pkg, false);
+							atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
+							int cmp = atom_compare(batom, iatom);
+
+							if (cmp == EQUAL || cmp == OLDER) {
+								/* It's the same or older. skipping. */
+								atom_implode(subatom);
+								continue;
+							}
+						}
+
+						if (binpkg_pkg != NULL) {
+							pkg_fetch(level + 1, subatom, binpkg_pkg);
+						} else if (installed_pkg == NULL) {
+							warn("cannot resolve %s from rdepend(%s)", name, p);
+						}
 
 						atom_implode(subatom);
 					} else {
