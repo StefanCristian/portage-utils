@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 #include <assert.h>
 
 #ifdef ENABLE_GPKG
@@ -204,6 +205,9 @@ typedef struct llist_char_t llist_char;
 static void pkg_fetch(int, const depend_atom *, tree_pkg_ctx *);
 static void pkg_merge(int, const depend_atom *, tree_pkg_ctx *);
 static int pkg_unmerge(tree_pkg_ctx *, depend_atom *, set *, int, char **, int, char **);
+
+/* track packages already queued for installation to avoid duplicates */
+static set *_qmerge_processed_pkgs = NULL;
 
 static bool
 qmerge_prompt(const char *p)
@@ -1157,8 +1161,24 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 				case '<':
 				case '>':
 				case '=':
-					if (verbose)
-						qfprintf(stderr, "Unhandled depstring %s\n", name);
+					/* version-constrained dependency - process normally */
+					if ((subatom = atom_explode(name)) != NULL) {
+						bpkg = best_version(subatom, BV_INSTALLED | BV_BINPKG);
+						if (bpkg == NULL) {
+							warn("cannot resolve %s from rdepend(%s)",
+									name, p);
+							atom_implode(subatom);
+							continue;
+						}
+
+						if (tree_pkg_get_treetype(bpkg) == TREETYPE_BINPKG)
+							pkg_fetch(level + 1, subatom, bpkg);
+
+						atom_implode(subatom);
+					} else {
+						qfprintf(stderr, "Cant explode atom %s\n", name);
+					}
+					break;
 				case '\0':
 					break;
 				default:
@@ -2034,6 +2054,23 @@ pkg_fetch(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 {
 	atom_ctx *patom     = tree_pkg_atom(mpkg, false);
 	int       verifyret;
+	char      pkg_key[512];
+
+	/* create unique key for this package (CATEGORY/PF) */
+	snprintf(pkg_key, sizeof(pkg_key), "%s/%s",
+	         patom->CATEGORY ? patom->CATEGORY : "",
+	         patom->PF ? patom->PF : "");
+
+	/* check if we've already processed this package */
+	if (_qmerge_processed_pkgs != NULL && contains_set(pkg_key, _qmerge_processed_pkgs)) {
+		IF_DEBUG(fprintf(stderr, "  Skipping duplicate: %s\n", pkg_key));
+		return;
+	}
+
+	if (_qmerge_processed_pkgs == NULL)
+		_qmerge_processed_pkgs = create_set();
+
+	add_set(pkg_key, _qmerge_processed_pkgs);
 
 	/* qmerge -pv patch */
 	if (pretend) {
@@ -2321,6 +2358,19 @@ int qmerge_main(int argc, char **argv)
 
 	qmerge_strict = contains_set("strict", features) ? 1 : 0;
 
+	/*
+	for (i = optind; i < argc; ++i) {
+		const char *arg = argv[i];
+		if (arg[0] == '@')
+			continue;
+		if (arg[0] == '/' ||
+		    strstr(arg, ".gpkg.tar") != NULL ||
+		    strstr(arg, ".tbz2") != NULL ||
+		    strstr(arg, ".xpak") != NULL) {
+			err("Full path is not supported");
+		}
+	} */
+
 	/* Short circut this. */
 	if (install && !pretend) {
 		if (follow_rdepends && getenv("QMERGE") == NULL) {
@@ -2350,19 +2400,35 @@ int qmerge_main(int argc, char **argv)
 		int save_verbose = verbose;
 		int save_quiet = quiet;
 
+		/* reset processed packages tracking for pretend run */
+		if (_qmerge_processed_pkgs != NULL) {
+			free_set(_qmerge_processed_pkgs);
+			_qmerge_processed_pkgs = NULL;
+		}
+
 		pretend = save_pretend ? 10 : 100;
 		verbose = 0;
 		quiet = 1;
 		ret = qmerge_run(todo);
 		if (ret != EXIT_SUCCESS || save_pretend)
-			return ret;
+			goto cleanup;
 
 		if (uninstall) {
-			if (!qmerge_prompt("OK to unmerge these packages"))
-				return EXIT_FAILURE;
+			if (!qmerge_prompt("OK to unmerge these packages")) {
+				ret = EXIT_FAILURE;
+				goto cleanup;
+			}
 		} else {
-			if (!qmerge_prompt("OK to merge these packages"))
-				return EXIT_FAILURE;
+			if (!qmerge_prompt("OK to merge these packages")) {
+				ret = EXIT_FAILURE;
+				goto cleanup;
+			}
+		}
+
+		/* reset processed packages tracking for actual run */
+		if (_qmerge_processed_pkgs != NULL) {
+			free_set(_qmerge_processed_pkgs);
+			_qmerge_processed_pkgs = NULL;
 		}
 
 		pretend = save_pretend;
@@ -2371,8 +2437,15 @@ int qmerge_main(int argc, char **argv)
 	}
 
 	ret = qmerge_run(todo);
+
+	cleanup:
 	if (todo != NULL)
 		free_set(todo);
+
+	if (_qmerge_processed_pkgs != NULL) {
+		free_set(_qmerge_processed_pkgs);
+		_qmerge_processed_pkgs = NULL;
+	}
 
 	if (_qmerge_binpkg_tree != NULL)
 		tree_close(_qmerge_binpkg_tree);

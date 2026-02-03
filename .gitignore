@@ -91,3 +91,10 @@ autotools/gnulib/sys
 autotools/gnulib/malloc/scratch_buffer.gl.h
 *.dirstamp
 # END GNULIB
+
+# IDEs
+.vscode/
+.idea/
+
+# logs
+*.log
