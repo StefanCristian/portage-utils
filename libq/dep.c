@@ -361,7 +361,9 @@ dep_node_t *dep_grow_tree
 
 dep_grow_tree_fail:
   array_deepfree(tokens, (array_free_cb *)dep_burn_tree);
-  array_deepfree(res, (array_free_cb *)array_free);
+   /* just free the array, nodes are in the tree structure
+   * and will be freed by dep_burn_tree() */
+  array_free(res); 
 
   if (ret != NULL &&
       ret->members != NULL &&
