@@ -1219,15 +1219,22 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 							int cmp = atom_compare(batom, iatom);
 
 							if (cmp == EQUAL || cmp == OLDER) {
-								/* if it's the same or older: skip */
-								atom_implode(subatom);
-								continue;
-							}
+							atom_implode(subatom);
+							continue;
 						}
+					}
 
-						if (binpkg_pkg != NULL) {
+					if (binpkg_pkg != NULL) {
+						atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
+						char bpkg_key[512];
+						snprintf(bpkg_key, sizeof(bpkg_key), "%s/%s",
+						         batom->CATEGORY ? batom->CATEGORY : "",
+						         batom->PF ? batom->PF : "");
+						if (_qmerge_processed_pkgs == NULL ||
+						    !contains_set(bpkg_key, _qmerge_processed_pkgs))
+						{
 							pkg_fetch(level + 1, subatom, binpkg_pkg);
-						} else if (installed_pkg == NULL) {
+						}
 							warn("cannot resolve %s from rdepend(%s)", name, p);
 						}
 
@@ -1258,15 +1265,22 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 							int cmp = atom_compare(batom, iatom);
 
 							if (cmp == EQUAL || cmp == OLDER) {
-								/* It's the same or older. skipping. */
-								atom_implode(subatom);
-								continue;
-							}
+							atom_implode(subatom);
+							continue;
 						}
+					}
 
-						if (binpkg_pkg != NULL) {
+					if (binpkg_pkg != NULL) {
+						atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
+						char bpkg_key[512];
+						snprintf(bpkg_key, sizeof(bpkg_key), "%s/%s",
+						         batom->CATEGORY ? batom->CATEGORY : "",
+						         batom->PF ? batom->PF : "");
+						if (_qmerge_processed_pkgs == NULL ||
+						    !contains_set(bpkg_key, _qmerge_processed_pkgs))
+						{
 							pkg_fetch(level + 1, subatom, binpkg_pkg);
-						} else if (installed_pkg == NULL) {
+						}
 							warn("cannot resolve %s from rdepend(%s)", name, p);
 						}
 
