@@ -247,11 +247,12 @@ fetch(const char *destdir, const char *src)
 		const char *argv[] = {
 			"echo",
 			"wget",
+			"-q",
+			"--no-verbose",
 			"-c",
 			"-P",
 			destdir,
 			path,
-			quiet ? (char *)"-q" : NULL,
 			NULL,
 		};
 
