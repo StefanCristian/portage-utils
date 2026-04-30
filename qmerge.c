@@ -27,8 +27,10 @@
 
 #include "stat-time.h"
 
+#include "array.h"
 #include "atom.h"
 #include "copy_file.h"
+#include "dep.h"
 #include "move_file.h"
 #include "contents.h"
 #include "eat_file.h"
@@ -1112,7 +1114,6 @@ static void
 pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 {
 	set            *objs;
-	tree_pkg_ctx   *bpkg;
 	tree_pkg_ctx   *previnst;
 	atom_ctx       *slotatom;
 	atom_ctx       *matom;
@@ -1123,8 +1124,6 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 	char           *D;
 	char           *T;
 	int             i;
-	char          **ARGV;
-	int             ARGC;
 	struct stat     st;
 	char          **iargv;
 	int             iargc;
@@ -1169,127 +1168,88 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 
 	(void)qprint_tree_node(level, mpkg, previnst, replacing);
 
-	p = tree_pkg_meta(mpkg, Q_RDEPEND);
-	if (p != NULL &&
-			p[0] != '\0' &&
-			follow_rdepends)
-	{
-		IF_DEBUG(fprintf(stderr, "\n+Parent: %s\n+Depstring: %s\n",
-					atom_to_string(matom), p));
+	if (follow_rdepends) {
+		static const enum tree_pkg_meta_keys dep_keys[] =
+			{ Q_RDEPEND, Q_PDEPEND };
+		set    *use_set;
+		char   *use_str;
+		size_t  dk;
 
-		/* <hack> */
-		if (strncmp(p, "|| ", 3) == 0) {
-			if (verbose)
-				qfprintf(stderr, "fix this rdepend hack %s\n", p);
-			p = (char *)"";
-		}
-		/* </hack> */
-
-		makeargv(p, &ARGC, &ARGV);
-		/* Walk the rdepends here. Merging what need be. */
-		for (i = 1; i < ARGC; i++) {
-			depend_atom *subatom;
-			tree_pkg_ctx *installed_pkg;
-			tree_pkg_ctx *binpkg_pkg;
-			char        *name = ARGV[i];
-
-			switch (*name) {
-				case '|':
-				case '!':
-				case '<':
-				case '>':
-				case '=':
-					/* version-constrained dependency */
-					if ((subatom = atom_explode(name)) != NULL) {
-						/* let's check if already installed */
-						installed_pkg = best_version(subatom, BV_INSTALLED);
-						binpkg_pkg = best_version(subatom, BV_BINPKG);
-
-						if (installed_pkg != NULL && binpkg_pkg == NULL) {
-							atom_implode(subatom);
-							continue;
-						}
-
-						if (installed_pkg != NULL && binpkg_pkg != NULL) {
-							/* both exist, so only fetch if binpkg is newer */
-							atom_ctx *iatom = tree_pkg_atom(installed_pkg, false);
-							atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
-							int cmp = atom_compare(batom, iatom);
-
-							if (cmp == EQUAL || cmp == OLDER) {
-							atom_implode(subatom);
-							continue;
-						}
-					}
-
-					if (binpkg_pkg != NULL) {
-						atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
-						char bpkg_key[512];
-						snprintf(bpkg_key, sizeof(bpkg_key), "%s/%s",
-						         batom->CATEGORY ? batom->CATEGORY : "",
-						         batom->PF ? batom->PF : "");
-						if (_qmerge_processed_pkgs == NULL ||
-						    !contains_set(bpkg_key, _qmerge_processed_pkgs))
-						{
-							pkg_fetch(level + 1, subatom, binpkg_pkg);
-						}
-					} else {
-						warn("cannot resolve %s from rdepend(%s)", name, p);
-					}
-					atom_implode(subatom);
-				} else {
-					qfprintf(stderr, "Cant explode atom %s\n", name);
+		use_str = tree_pkg_meta(mpkg, Q_USE);
+		use_set = create_set();
+		if (use_str != NULL) {
+			char *tok = use_str;
+			char *end;
+			while (*tok != '\0') {
+				while (*tok == ' ') tok++;
+				if (*tok == '\0') break;
+				end = tok;
+				while (*end != ' ' && *end != '\0') end++;
+				char flag[256];
+				size_t flen = (size_t)(end - tok);
+				if (flen < sizeof(flag)) {
+					memcpy(flag, tok, flen);
+					flag[flen] = '\0';
+					add_set(flag, use_set);
 				}
-				break;
-				case '\0':
-					break;
-				default:
-					/* Unversioned dependency */
-					if ((subatom = atom_explode(name)) != NULL) {
-						/* let's check if already installed */
-						installed_pkg = best_version(subatom, BV_INSTALLED);
-						binpkg_pkg = best_version(subatom, BV_BINPKG);
-
-						if (installed_pkg != NULL && binpkg_pkg == NULL) {
-							/* already installed and has no binpkg */
-							atom_implode(subatom);
-							continue;
-						}
-
-						if (installed_pkg != NULL && binpkg_pkg != NULL) {
-							/* both exist, so only fetch if binpkg is newer */
-							atom_ctx *iatom = tree_pkg_atom(installed_pkg, false);
-							atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
-							int cmp = atom_compare(batom, iatom);
-
-							if (cmp == EQUAL || cmp == OLDER) {
-							atom_implode(subatom);
-							continue;
-						}
-					}
-
-					if (binpkg_pkg != NULL) {
-						atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
-						char bpkg_key[512];
-						snprintf(bpkg_key, sizeof(bpkg_key), "%s/%s",
-						         batom->CATEGORY ? batom->CATEGORY : "",
-						         batom->PF ? batom->PF : "");
-						if (_qmerge_processed_pkgs == NULL ||
-						    !contains_set(bpkg_key, _qmerge_processed_pkgs))
-						{
-							pkg_fetch(level + 1, subatom, binpkg_pkg);
-						}
-					} else {
-						warn("cannot resolve %s from rdepend(%s)", name, p);
-					}
-					atom_implode(subatom);
-				} else {
-					qfprintf(stderr, "Cant explode atom %s\n", name);
-				}
-				break;
+				tok = end;
 			}
 		}
-		freeargv(ARGC, ARGV);
+
+		for (dk = 0; dk < 2; dk++) {
+			dep_node_t *dep_tree;
+
+			p = tree_pkg_meta(mpkg, dep_keys[dk]);
+			if (p == NULL || p[0] == '\0')
+				continue;
+
+			IF_DEBUG(fprintf(stderr, "\n+Parent: %s\n+Depstring: %s\n",
+						atom_to_string(matom), p));
+
+			dep_tree = dep_grow_tree(p);
+			if (dep_tree != NULL) {
+				array    *atoms = array_new();
+				size_t    ai;
+				atom_ctx *subatom;
+
+				dep_prune_use(dep_tree, use_set);
+				dep_flatten_tree(dep_tree, atoms);
+
+				array_for_each(atoms, ai, subatom) {
+					tree_pkg_ctx *inst;
+					tree_pkg_ctx *binpkg_pkg;
+					if (subatom->blocker != ATOM_BL_NONE)
+						continue;
+					inst       = best_version(subatom, BV_INSTALLED);
+					binpkg_pkg = best_version(subatom, BV_BINPKG);
+					if (inst != NULL && binpkg_pkg == NULL)
+						continue;
+					if (inst != NULL && binpkg_pkg != NULL) {
+						atom_ctx *iatom = tree_pkg_atom(inst, false);
+						atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
+						int cmp = atom_compare(batom, iatom);
+						if (cmp == EQUAL || cmp == OLDER)
+							continue;
+					}
+					if (binpkg_pkg != NULL) {
+						atom_ctx *batom = tree_pkg_atom(binpkg_pkg, false);
+						char bpkg_key[512];
+						snprintf(bpkg_key, sizeof(bpkg_key), "%s/%s",
+						         batom->CATEGORY ? batom->CATEGORY : "",
+						         batom->PF ? batom->PF : "");
+						if (_qmerge_processed_pkgs == NULL ||
+						    !contains_set(bpkg_key, _qmerge_processed_pkgs))
+							pkg_fetch(level + 1, subatom, binpkg_pkg);
+					} else {
+						warn("cannot resolve %s from rdepend",
+						     atom_to_string(subatom));
+					}
+				}
+				array_free(atoms);
+				dep_burn_tree(dep_tree);
+			}
+		}
+		free_set(use_set);
 	}
 
 	if (pretend == 100) {
