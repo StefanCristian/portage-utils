@@ -1193,10 +1193,6 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 			tree_pkg_ctx *binpkg_pkg;
 			char        *name = ARGV[i];
 
-			if (strchr(name, '[') != NULL) {
-				continue;
-			}
-
 			switch (*name) {
 				case '|':
 				case '!':
@@ -1237,14 +1233,14 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 						{
 							pkg_fetch(level + 1, subatom, binpkg_pkg);
 						}
-							warn("cannot resolve %s from rdepend(%s)", name, p);
-						}
-
-						atom_implode(subatom);
 					} else {
-						qfprintf(stderr, "Cant explode atom %s\n", name);
+						warn("cannot resolve %s from rdepend(%s)", name, p);
 					}
-					break;
+					atom_implode(subatom);
+				} else {
+					qfprintf(stderr, "Cant explode atom %s\n", name);
+				}
+				break;
 				case '\0':
 					break;
 				default:
@@ -1283,14 +1279,14 @@ pkg_merge(int level, const depend_atom *qatom, tree_pkg_ctx *mpkg)
 						{
 							pkg_fetch(level + 1, subatom, binpkg_pkg);
 						}
-							warn("cannot resolve %s from rdepend(%s)", name, p);
-						}
-
-						atom_implode(subatom);
 					} else {
-						qfprintf(stderr, "Cant explode atom %s\n", name);
+						warn("cannot resolve %s from rdepend(%s)", name, p);
 					}
-					break;
+					atom_implode(subatom);
+				} else {
+					qfprintf(stderr, "Cant explode atom %s\n", name);
+				}
+				break;
 			}
 		}
 		freeargv(ARGC, ARGV);
